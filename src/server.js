@@ -9,22 +9,7 @@ const mongoose  = require('mongoose');
 const app = express();
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
-app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? [
-        process.env.FRONTEND_URL,
-        'https://thriving-sprite-61f255.netlify.app'
-      ]
-    : [
-        'http://localhost:3000',
-        'http://localhost:5173',
-        'http://localhost:19006',
-        'http://10.10.3.209:5000',
-        'http://192.168.56.1:5000',
-        /^http:\/\/192\.168\.\d+\.\d+:\d+$/
-      ],
-  credentials: true
-}));
+app.use(cors({ origin: '*', credentials: false }));
 app.use(rateLimit({ windowMs: 15*60*1000, max: 200 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
