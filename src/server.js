@@ -9,17 +9,19 @@ const mongoose  = require('mongoose');
 const app = express();
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
-// 🔧 FIX 1: Allow connections from your computer's local IP during development
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
-    ? process.env.FRONTEND_URL 
+    ? [
+        process.env.FRONTEND_URL,
+        'https://thriving-sprite-61f255.netlify.app'
+      ]
     : [
         'http://localhost:3000',
         'http://localhost:5173',
-        'http://localhost:19006',        // Expo web
-        'http://10.10.3.209:5000',       // Your backend IP (adjust if needed)
-        'http://192.168.56.1:5000',      // Alternative network interface
-        /^http:\/\/192\.168\.\d+\.\d+:\d+$/  // Allow any local network IP
+        'http://localhost:19006',
+        'http://10.10.3.209:5000',
+        'http://192.168.56.1:5000',
+        /^http:\/\/192\.168\.\d+\.\d+:\d+$/
       ],
   credentials: true
 }));
@@ -50,7 +52,6 @@ app.use((err, req, res, next) => {
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => {
     console.log('✅ MongoDB connected');
-    // 🔧 FIX 2: Listen on all network interfaces (0.0.0.0) so your phone can connect
     const PORT = process.env.PORT || 5000;
     app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server on port ${PORT} (listening on 0.0.0.0)`));
   })
