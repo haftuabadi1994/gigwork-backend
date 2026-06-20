@@ -3,6 +3,7 @@ const ctrl         = require('../controllers/adminController');
 const depositCtrl  = require('../controllers/depositController');
 const hbCtrl       = require('../controllers/handbookController');
 const teamCtrl     = require('../controllers/teamController');
+const adminEqubCtrl= require('../controllers/adminEqubController');
 const { protect, adminOnly } = require('../middleware/auth');
 const Transaction  = require('../models/Transaction');
 const Notification = require('../models/Notification');
@@ -81,6 +82,16 @@ router.post('/broadcast', async (req, res, next) => {
 
 // ── Team & Referral overview ──────────────────────────────────────────────────
 router.get('/team/leaderboard', teamCtrl.getLeaderboard);
+
+// ── Digital Equb ─────────────────────────────────────────────────────────────
+router.get('/equb',                   adminEqubCtrl.listEqubs);
+router.post('/equb',                  adminEqubCtrl.createEqub);
+router.get('/equb/:id',               adminEqubCtrl.getEqub);
+router.patch('/equb/:id',             adminEqubCtrl.updateEqub);
+router.post('/equb/:id/start',        adminEqubCtrl.startEqub);
+router.post('/equb/:id/force-round',  adminEqubCtrl.forceRound);
+router.post('/equb/:id/kick/:userId', adminEqubCtrl.kickMember);
+router.delete('/equb/:id',            adminEqubCtrl.cancelEqub);
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 router.get('/settings',    ctrl.getSettings);
