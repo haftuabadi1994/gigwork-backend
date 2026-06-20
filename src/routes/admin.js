@@ -54,6 +54,12 @@ router.get('/transactions', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── Commissions ───────────────────────────────────────────────────────────────
+router.get('/commissions',         ctrl.listCommissions);
+router.get('/commissions/summary', ctrl.getCommissionSummary);
+router.get('/level-rules',         ctrl.listLevelRules);
+router.patch('/level-rules/:level',ctrl.updateLevelRule);
+
 // ── Handbook & Level Rules ────────────────────────────────────────────────────
 router.get('/handbook',       hbCtrl.adminList);
 router.post('/handbook',      hbCtrl.create);

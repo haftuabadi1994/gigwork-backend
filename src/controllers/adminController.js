@@ -4,6 +4,7 @@ const TaskAssignment = require('../models/TaskAssignment');
 const Transaction = require('../models/Transaction');
 const Withdrawal = require('../models/Withdrawal');
 const Deposit = require('../models/Deposit');
+const LevelRule = require('../models/LevelRule');
 const { creditWallet, debitWallet } = require('../utils/wallet');
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
@@ -31,7 +32,6 @@ exports.getDashboard = async (req, res, next) => {
       Deposit.aggregate([{ $match: { status: 'approved' } }, { $group: { _id: null, total: { $sum: '$amountETB' } } }])
     ]);
 
-    // Daily earnings last 7 days
     const sevenDaysAgo = new Date(Date.now() - 7 * 86400000);
     const dailyEarnings = await Transaction.aggregate([
       { $match: { createdAt: { $gte: sevenDaysAgo }, type: 'task_earning' } },
@@ -189,7 +189,7 @@ exports.getTaskSubmissions = async (req, res, next) => {
 
 exports.reviewSubmission = async (req, res, next) => {
   try {
-    const { action, reviewNote } = req.body; // action: 'approve' | 'reject'
+    const { action, reviewNote } = req.body;
     const assignment = await TaskAssignment.findById(req.params.assignmentId).populate('task').populate('user');
     if (!assignment) return res.status(404).json({ error: 'Assignment not found.' });
 
@@ -248,7 +248,6 @@ exports.processWithdrawal = async (req, res, next) => {
       w.processedAt = new Date();
       w.adminNote = adminNote;
     } else if (action === 'reject') {
-      // Refund the amount back to user's wallet
       await creditWallet({
         userId: w.user._id,
         amountETB: w.amountETB,
@@ -262,6 +261,121 @@ exports.processWithdrawal = async (req, res, next) => {
     }
     await w.save();
     res.json({ message: `Withdrawal ${action}d successfully.` });
+  } catch (err) { next(err); }
+};
+
+// ─── COMMISSIONS ──────────────────────────────────────────────────────────────
+
+exports.listCommissions = async (req, res, next) => {
+  try {
+    const { page = 1, limit = 20, search, tier, startDate, endDate } = req.query;
+    const skip = (page - 1) * limit;
+
+    const match = { type: 'referral_bonus' };
+    if (startDate || endDate) {
+      match.createdAt = {};
+      if (startDate) match.createdAt.$gte = new Date(startDate);
+      if (endDate)   match.createdAt.$lte = new Date(endDate);
+    }
+    if (tier === 'A') match.description = { $regex: 'Tier A', $options: 'i' };
+    if (tier === 'B') match.description = { $regex: 'Tier B', $options: 'i' };
+
+    const basePipeline = [
+      { $match: match },
+      { $lookup: { from: 'users', localField: 'user',      foreignField: '_id', as: 'referrer' } },
+      { $lookup: { from: 'users', localField: 'reference', foreignField: '_id', as: 'worker'   } },
+      { $unwind: '$referrer' },
+      { $unwind: { path: '$worker', preserveNullAndEmpty: true } },
+      {
+        $project: {
+          amountETB: 1, description: 1, createdAt: 1, status: 1,
+          tier: {
+            $cond: [{ $regexMatch: { input: '$description', regex: /Tier A/i } }, 'A',
+              { $cond: [{ $regexMatch: { input: '$description', regex: /Tier B/i } }, 'B', 'other'] }]
+          },
+          referrer: { _id: 1, name: 1, email: 1, referralCode: 1 },
+          worker:   { _id: 1, name: 1, email: 1 }
+        }
+      }
+    ];
+
+    if (search) {
+      basePipeline.push({
+        $match: {
+          $or: [
+            { 'referrer.name':  { $regex: search, $options: 'i' } },
+            { 'referrer.email': { $regex: search, $options: 'i' } },
+            { 'worker.name':    { $regex: search, $options: 'i' } }
+          ]
+        }
+      });
+    }
+
+    const [data, countResult] = await Promise.all([
+      Transaction.aggregate([...basePipeline, { $sort: { createdAt: -1 } }, { $skip: skip }, { $limit: Number(limit) }]),
+      Transaction.aggregate([...basePipeline, { $count: 'total' }])
+    ]);
+
+    res.json({ success: true, data, total: countResult[0]?.total || 0, page: Number(page), limit: Number(limit) });
+  } catch (err) { next(err); }
+};
+
+exports.getCommissionSummary = async (req, res, next) => {
+  try {
+    const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+    const [overall, monthly, topEarners] = await Promise.all([
+      Transaction.aggregate([
+        { $match: { type: 'referral_bonus' } },
+        { $group: {
+            _id: null,
+            totalPaid: { $sum: '$amountETB' },
+            tierA: { $sum: { $cond: [{ $regexMatch: { input: '$description', regex: /Tier A/i } }, '$amountETB', 0] } },
+            tierB: { $sum: { $cond: [{ $regexMatch: { input: '$description', regex: /Tier B/i } }, '$amountETB', 0] } },
+            count: { $sum: 1 }
+        }}
+      ]),
+      Transaction.aggregate([
+        { $match: { type: 'referral_bonus', createdAt: { $gte: startOfMonth } } },
+        { $group: { _id: null, total: { $sum: '$amountETB' }, count: { $sum: 1 } } }
+      ]),
+      Transaction.aggregate([
+        { $match: { type: 'referral_bonus' } },
+        { $group: { _id: '$user', earned: { $sum: '$amountETB' } } },
+        { $sort: { earned: -1 } },
+        { $limit: 5 },
+        { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'user' } },
+        { $unwind: '$user' },
+        { $project: { earned: 1, 'user.name': 1, 'user.email': 1, 'user.referralCode': 1 } }
+      ])
+    ]);
+
+    res.json({
+      success: true,
+      overall:    overall[0]  || { totalPaid: 0, tierA: 0, tierB: 0, count: 0 },
+      monthly:    monthly[0]  || { total: 0, count: 0 },
+      topEarners
+    });
+  } catch (err) { next(err); }
+};
+
+exports.listLevelRules = async (req, res, next) => {
+  try {
+    const rules = await LevelRule.find().sort({ level: 1 });
+    res.json({ success: true, data: rules });
+  } catch (err) { next(err); }
+};
+
+exports.updateLevelRule = async (req, res, next) => {
+  try {
+    const { referralCommission, teamBonusPercent } = req.body;
+    const rule = await LevelRule.findOneAndUpdate(
+      { level: req.params.level },
+      { $set: { referralCommission, teamBonusPercent } },
+      { new: true, runValidators: true }
+    );
+    if (!rule) return res.status(404).json({ success: false, message: 'Level rule not found' });
+    res.json({ success: true, data: rule });
   } catch (err) { next(err); }
 };
 
