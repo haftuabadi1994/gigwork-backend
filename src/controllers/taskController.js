@@ -6,6 +6,25 @@ const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const { creditWallet } = require('../utils/wallet');
 
+// Default minimum view time (seconds) per platform, used when a task doesn't
+// set its own requiredViewSeconds. Admin can override per task.
+const PLATFORM_DEFAULT_VIEW_SECONDS = {
+  youtube:   30,
+  tiktok:    15,
+  instagram: 15,
+  facebook:  20,
+  other:     0
+};
+
+// Resolve the effective required view time for a task.
+function getRequiredViewSeconds(task) {
+  if (!task.trailerVideoUrl) return 0; // no trailer => nothing to enforce
+  if (task.requiredViewSeconds !== null && task.requiredViewSeconds !== undefined) {
+    return task.requiredViewSeconds;
+  }
+  return PLATFORM_DEFAULT_VIEW_SECONDS[task.trailerPlatform] ?? 0;
+}
+
 // GET /api/tasks — list available tasks
 exports.listTasks = async (req, res, next) => {
   try {
@@ -35,6 +54,7 @@ exports.listTasks = async (req, res, next) => {
 
     const enriched = tasks.map(t => ({
       ...t,
+      requiredViewSeconds: getRequiredViewSeconds(t),
       myAssignment: assignmentMap[t._id.toString()] || null
     }));
 
@@ -56,7 +76,13 @@ exports.getTask = async (req, res, next) => {
       task: task._id
     }).lean();
 
-    res.json({ task: { ...task, myAssignment: assignment } });
+    res.json({
+      task: {
+        ...task,
+        requiredViewSeconds: getRequiredViewSeconds(task),
+        myAssignment: assignment
+      }
+    });
   } catch (err) {
     next(err);
   }
@@ -100,10 +126,39 @@ exports.acceptTask = async (req, res, next) => {
   }
 };
 
+// PATCH /api/tasks/:id/view-progress
+// Mobile app calls this periodically (or on completion) to report watch time.
+// Stored on the assignment so submitTask can verify it server-side.
+exports.reportViewProgress = async (req, res, next) => {
+  try {
+    const { watchedSeconds } = req.body;
+    if (typeof watchedSeconds !== 'number' || watchedSeconds < 0) {
+      return res.status(400).json({ error: 'watchedSeconds must be a non-negative number.' });
+    }
+
+    const assignment = await TaskAssignment.findOne({
+      user: req.user._id,
+      task: req.params.id
+    });
+    if (!assignment) return res.status(404).json({ error: 'Assignment not found.' });
+
+    // Only ever increase — never let a client report less than what we already have.
+    assignment.watchedSeconds = Math.max(assignment.watchedSeconds || 0, watchedSeconds);
+    await assignment.save();
+
+    res.json({ watchedSeconds: assignment.watchedSeconds });
+  } catch (err) {
+    next(err);
+  }
+};
+
 // PATCH /api/tasks/:id/submit
 exports.submitTask = async (req, res, next) => {
   try {
     const { submissionNote, submissionUrl } = req.body;
+    const task = await Task.findById(req.params.id).lean();
+    if (!task) return res.status(404).json({ error: 'Task not found.' });
+
     const assignment = await TaskAssignment.findOne({
       user: req.user._id,
       task: req.params.id
@@ -111,6 +166,17 @@ exports.submitTask = async (req, res, next) => {
     if (!assignment) return res.status(404).json({ error: 'Assignment not found.' });
     if (['submitted', 'completed'].includes(assignment.status)) {
       return res.status(400).json({ error: 'Task already submitted.' });
+    }
+
+    // Enforce minimum view time server-side, not just in the UI.
+    const requiredSeconds = getRequiredViewSeconds(task);
+    const watchedSeconds = assignment.watchedSeconds || 0;
+    if (requiredSeconds > 0 && watchedSeconds < requiredSeconds) {
+      return res.status(400).json({
+        error: `Please watch at least ${requiredSeconds}s before submitting. You've watched ${watchedSeconds}s.`,
+        requiredViewSeconds: requiredSeconds,
+        watchedSeconds
+      });
     }
 
     assignment.status = 'submitted';
@@ -171,17 +237,6 @@ exports.completeTask = async (req, res, next) => {
     // Notify worker
     await notify(assignment.user._id, 'task_completed', 'Task completed — payment sent!',
       `"${assignment.task.title}" approved. ${earnedETB} ETB credited to your income wallet.`, { taskId: assignment.task._id, earnedETB });
-
-    // Notify referrer if bonus paid
-    if (assignment.user.referredBy) {
-      const bonusPercent = Number(process.env.REFERRAL_BONUS_PERCENT) || 10;
-      const bonus = Math.round(earnedETB * bonusPercent / 100);
-      const prevCompleted = await TaskAssignment.countDocuments({ user: assignment.user._id, status: 'completed', _id: { $ne: assignment._id } });
-      if (prevCompleted === 0 && bonus > 0) {
-        await notify(assignment.user.referredBy, 'referral_earned', 'Referral bonus earned!',
-          `${assignment.user.name} completed their first task. You earned ${bonus} ETB referral bonus!`, { bonus });
-      }
-    }
 
     res.json({ message: 'Task completed and payment credited!', earnedETB });
   } catch (err) {

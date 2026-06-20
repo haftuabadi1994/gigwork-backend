@@ -19,8 +19,12 @@ const taskSchema = new mongoose.Schema({
   minLevel: { type: String, enum: ['intern','job1','job2','job3','job4','job5','job6','job7','job8','job9','job10'], default: 'intern' },
 
   // Multimedia guidance
-  trailerVideoUrl: { type: String, default: null },   // YouTube / TikTok / Instagram embed URL
-  trailerPlatform: { type: String, enum: ['youtube','tiktok','instagram','other', null], default: null },
+  trailerVideoUrl: { type: String, default: null },   // YouTube / TikTok / Instagram / Facebook embed URL
+  trailerPlatform: { type: String, enum: ['youtube','tiktok','instagram','facebook','other', null], default: null },
+
+  // Minimum time (seconds) the worker must view the trailer before they can submit.
+  // null = use the platform default (see PLATFORM_DEFAULT_VIEW_SECONDS in taskController.js).
+  requiredViewSeconds: { type: Number, default: null, min: 0 },
 
   // Quality
   minQualityScore: { type: Number, default: 0 }

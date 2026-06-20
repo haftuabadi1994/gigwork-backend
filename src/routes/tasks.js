@@ -8,6 +8,7 @@ router.get('/', ctrl.listTasks);
 router.get('/my', ctrl.myTasks);
 router.get('/:id', ctrl.getTask);
 router.post('/:id/accept', ctrl.acceptTask);
+router.patch('/:id/view-progress', ctrl.reportViewProgress);  // report watch time
 router.patch('/:id/submit', ctrl.submitTask);
 router.post('/:id/complete', ctrl.completeTask);      // worker self-complete (demo mode)
 router.post('/', adminOnly, ctrl.createTask);          // admin only

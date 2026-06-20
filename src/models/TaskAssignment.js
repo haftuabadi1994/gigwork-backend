@@ -36,6 +36,14 @@ const taskAssignmentSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // Seconds of trailer video the worker has watched, reported by the
+  // mobile app via PATCH /api/tasks/:id/view-progress. Used to enforce
+  // Task.requiredViewSeconds before allowing submission.
+  watchedSeconds: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
   acceptedAt: {
     type: Date,
     default: Date.now
